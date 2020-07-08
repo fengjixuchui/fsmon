@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <signal.h>
 #include <getopt.h>
 #include <unistd.h>
@@ -16,12 +17,12 @@ static bool colorful = true;
 
 FileMonitorBackend *backends[] = {
 #if __APPLE__
-	&fmb_devfsev,
-	&fmb_kqueue,
-	&fmb_kdebug,
 #if !TARGET_WATCHOS
 	&fmb_fsevapi,
 #endif
+	&fmb_devfsev,
+	&fmb_kqueue,
+	&fmb_kdebug,
 #else
 	&fmb_inotify,
 #if HAVE_FANOTIFY
@@ -31,7 +32,7 @@ FileMonitorBackend *backends[] = {
 	NULL
 };
 
-static void control_c (int sig) {
+static void control_c(int sig) {
 	fm.running = false;
 }
 
@@ -101,16 +102,20 @@ static bool callback(FileMonitor *fm, FileMonitorEvent *ev) {
 			firstnode = true;
 		}
 		char *filename = fmu_jsonfilter (ev->file);
-		printf ("%s{\"filename\":\"%s\",\"pid\":%d,"
-			"\"uid\":%d,\"gid\":%d,", 
-			(fm->jsonStream || firstnode)? "":",", filename, ev->pid, ev->uid, ev->gid);
+		printf ("%s{\"filename\":\"%s\"", (fm->jsonStream || firstnode)? "":",", filename);
+		if (ev->pid) {
+			printf (",\"pid\":%d", ev->pid);
+		}
+		if (ev->uid && ev->gid) {
+			printf (",\"uid\":%d,\"gid\":%d,", ev->uid, ev->gid);
+		}
 		firstnode = false;
 		free (filename);
 		if (ev->inode) {
 			printf ("\"inode\":%d,", ev->inode);
 		}
 		if (ev->tstamp) {
-			uint64_t now = __sys_now();
+			uint64_t now = __sys_now ();
 			printf ("\"time\":%" PRId64 ",", now);
 		}
 		if (ev->tstamp) {
@@ -162,7 +167,7 @@ static bool callback(FileMonitor *fm, FileMonitorEvent *ev) {
 			printf ("%s%s%s\t%d\t\"%s%s%s\"\t%s -> %s\n",
 				color_begin, fm_typestr (ev->type), color_end,
 				ev->pid, color_begin2, ev->proc? ev->proc: "", color_end, ev->file,
-				ev->newfile);
+				ev->newfile? ev->newfile: "?");
 		} else {
 			printf ("%s%s%s\t%d\t\"%s%s%s\"\t%s\n",
 				color_begin, fm_typestr (ev->type), color_end,
@@ -170,7 +175,7 @@ static bool callback(FileMonitor *fm, FileMonitorEvent *ev) {
 		}
 	}
 	if (fm->link) {
-		int i;
+		size_t i;
 		char dst[1024];
 		const char *src = ev->file;
 		char *fname = strdup (ev->file);
@@ -215,11 +220,15 @@ static void help (const char *argv0) {
 		" -P [proc] events only from process name\n"
 		" -v        show version\n"
 		" [path]    only get events from this path\n"
+		"Examples:\n"
+		" fsmon /data\n"
+		" fsmon -J / | jq -r .filename\n"
+		" fsmon -B fanotify /home\n"
 		, argv0);
 }
 
 static bool use_backend(const char *name) {
-	int i;
+	size_t i;
 	for (i = 0; backends[i]; i++) {
 		if (!strcmp (backends[i]->name, name)) {
 			fm.backend = *backends[i];
@@ -230,13 +239,14 @@ static bool use_backend(const char *name) {
 }
 
 static void list_backends() {
-	int i;
+	size_t i;
 	for (i = 0; backends[i]; i++) {
 		printf ("%s\n", backends[i]->name);
 	}
 }
 
 int main (int argc, char **argv) {
+	char *absroot[PATH_MAX];
 	int c, ret = 0;
 #if __APPLE__
 	fm.backend = fmb_devfsev;
@@ -244,7 +254,7 @@ int main (int argc, char **argv) {
 	fm.backend = fmb_inotify;
 #endif
 
-	while ((c = getopt (argc, argv, "a:chb:B:d:fjJLnp:P:v")) != -1) {
+	while ((c = getopt (argc, argv, "a:chb:B:d:fjJlLnp:P:v")) != -1) {
 		switch (c) {
 		case 'a':
 			fm.alarm = atoi (optarg);
@@ -274,6 +284,7 @@ int main (int argc, char **argv) {
 		case 'J':
 			fm.jsonStream = true;
 			break;
+		case 'l':
 		case 'L':
 			list_backends ();
 			return 0;
@@ -292,7 +303,16 @@ int main (int argc, char **argv) {
 		}
 	}
 	if (optind < argc) {
-		fm.root = argv[optind];
+		if (optind + 1 < argc) {
+			eprintf ("Warning: Too many arguments passed, capturing events only from the first path.\n");
+		}
+		char * res = realpath (argv[optind], (char *)absroot);
+		if (!res) {
+			eprintf ("Invalid path\n");
+			free (absroot);
+			return 1;
+		}
+		fm.root = (const char *)absroot;
 	}
 	if (fm.child && !fm.pid) {
 		eprintf ("-c requires -p\n");

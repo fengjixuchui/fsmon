@@ -1,4 +1,4 @@
-/* fsmon -- MIT - Copyright NowSecure 2015-2016 - pancake@nowsecure.com */
+/* fsmon -- MIT - Copyright NowSecure 2015-2020 - pancake@nowsecure.com */
 
 #include <ctype.h>
 #include <stdio.h>
@@ -19,12 +19,12 @@
 #include "fsmon.h"
 
 void hexdump(const uint8_t *buf, unsigned int len, int w) {
-	unsigned int i, j;
+	size_t i, j;
 	if (w < 1) {
 		w = 16;
 	}
 	for (i = 0; i < len; i += w) {
-		printf ("0x%08x: ", i);
+		printf ("0x%08zx: ", i);
 		for (j = i; j < i + w; j++) {
 			if (j < len) {
 				printf (j%2 ? "%02x ":"%02x", buf[j]);
@@ -58,6 +58,8 @@ const char *fm_typestr(int type) {
 	switch (type) {
 	case FSE_ARG_DONE: return "FSE_ARG_DONE";
 	case FSE_OPEN: return "FSE_OPEN";
+	case FSE_CLOSE: return "FSE_CLOSE";
+	case FSE_CLOSE_WRITABLE: return "FSE_CLOSE_WRITABLE";
 	case FSE_UNKNOWN: return "FSE_UNKNOWN";
 	}
 	return (type >= 0 && type < FSE_MAX_EVENTS && types[type])? types[type]: "";
@@ -160,7 +162,7 @@ const char *get_proc_name(int pid, int *ppid) {
 #endif
 }
 
-bool is_directory (const char *str) {
+bool is_directory(const char *str) {
         struct stat buf = {0};
         if (!str || !*str) {
 		return false;
